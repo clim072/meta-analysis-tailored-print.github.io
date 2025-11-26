@@ -1,0 +1,474 @@
+---
+title: "Meta analysis tutorial in R with metafor"
+author: "C. Lim"
+date: "2025-11-26"
+output: 
+  html_document
+---
+
+<style>
+/* Code font styling */
+code {
+  font-family: "Fira Code", "JetBrains Mono", "Courier New", monospace;
+  font-size: 1.05em;
+}
+pre code {
+  font-family: "Fira Code", "JetBrains Mono", "Courier New", monospace;
+  font-size: 1.05em;
+}
+
+.darkpink {
+  color: #C2185B;      /* dark raspberry pink */
+  font-weight: 600;    /* optional emphasis */
+}
+
+.bigpink {
+  color: #C2185B;    /* dark raspberry pink */
+  font-size: 22px;   /* adjust size as you like */
+  font-weight: 600;  /* optional: semi-bold */
+}
+
+.bigtext { font-size: 22px; }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(kableExtra)
+```
+
+<br>
+
+This tutorial provides a brief, hands-on introduction to meta-analysis in R using the [metafor](https://metafor-project.org/doku.php/metafor) package.
+<br>
+
+We will:
+<br>
+
+- Load and inspect a meta-analytic dataset
+- Compute effect sizes with `escalc()`
+- Fit fixed- and random-effects models using `rma()`
+- Produce and interpret forest and funnel plots
+- Examine heterogeneity
+- Conduct a simple meta-regression (moderator analysis)
+
+<br>
+The example uses the dataset that you extracted for the tailored review [here.](https://docs.google.com/spreadsheets/d/1BVFL6FhlfoDbfruq8Rs4h5NH4NVuYNx_kqhDpF_tSlI/edit?gid=35544381#gid=35544381) 
+<br>
+<br>
+
+
+##  {.tabset .tabset-fade}
+
+### 1. Libraries  
+
+<br>
+
+Prior to meta-analysis, you will need to load a small set of core libraries.
+
+
+```{r chunk1, warning = FALSE, message = FALSE}
+library(metafor)     # meta-analysis models + escalc()
+library(dplyr)       # data handling (optional but useful)
+```
+
+<br>
+
+
+
+### 2. Reading in dataset  
+
+<br>
+
+
+For the worked example in this tutorial, we draw on data from our systematic review of tailored print interventions for smoking cessation. Among the included trials, the outcome most consistently reported was 7-day point-prevalence abstinence (7-day PPA), defined as self-reported abstinence from smoking for at least seven consecutive days at the follow-up assessment. We will use these studies to illustrate how to compute effect sizes and fit meta-analytic models in metafor. 
+
+Let's start by examining the dataset. You will see that the included trials did not all report cessation outcomes in the same statistical format. When extracting data for meta-analysis, we therefore recorded multiple types of effect-size information depending on what each study provided.
+
+```{r chunk2}
+review.dat <- read.csv("review_data.csv", header = TRUE, stringsAsFactors = FALSE)  
+review.dat
+```
+
+<br>
+
+
+⭐ **Some studies reported raw 2×2 event counts**
+
+These studies gave the number of participants who quit and did not quit in each arm (adjunct vs control).
+For these, we extracted:
+
+- tpos = number of quits in the treatment (adjunct) group
+- tneg = number of non-quits in the treatment group
+- cpos = number of quits in the control group
+- cneg = number of non-quits in the control group
+
+
+```{r chunk3, echo = FALSE}
+sampleid<- c("#9525", "sb_ts")
+author<-c("Cartmel","de Dios")
+year<-c("2023","2019")
+tpos<- c(15,6)
+tneg <- c(78,10)
+cpos<-c(16,4)
+cneg<-c(79,5)
+
+d<- data.frame(sampleid,author,year,tpos,tneg,cpos,cneg)
+ 
+d %>% 
+  knitr::kable(format = "html")%>%
+  kable_styling()
+```
+
+<br>
+
+
+⭐  **Most studies reported odds ratios along with 95% confidence intervals**
+
+Some trials did not provide raw quit counts but did report:
+
+- Odds Ratio (OR)
+- Lower 95% CI (ci_low)
+- Upper 95% CI (ci_high)
+
+<br>
+
+⭐ **One reported OR + p-value (but no CI)**
+
+Some trials reported an odds ratio but did not provide raw 2×2 cessation counts or confidence intervals. However, if a p-value is reported, it is still possible to reconstruct the standard error of the log odds ratio. We first convert the published OR to log(OR), then derive the z-statistic corresponding to the two-sided p-value, and finally calculate the standard error as SE = log(OR) / z. These reconstructed effect sizes can then be analysed alongside studies that reported raw data or full confidence intervals, ensuring that no eligible evidence is excluded.
+
+<br>
+
+<span class="darkpink">To ensure all available evidence is included, our extraction sheet preserves whatever effect size information each study provides.</span>
+During meta-analysis, all effect sizes are converted to a common effect metric (log OR or log RR) so that they can be pooled together (see next tab)
+
+
+### 3. How it works theoretically?  
+
+<br>
+
+Our next step is to convert all studies to a common effect size so they can be pooled in a single meta-analysis. 
+
+In metafor (and in all effect-size based meta-analysis), every study must provide:
+
+ - $y_i$ → the effect size (on a log scale for Odds Ratio or Relative Risk)
+ - $v_i$ → the sampling variance of that effect size
+
+These two numbers are essential because and they cannot be estimated unless every study has a known effect size ($y_i$) and a known precision ($v_i$).
+
+
+<br>
+
+**Why yi needs to be filled in?**</span>
+
+Studies report cessation results in different formats:
+
+Some report raw counts (tpos, tneg, cpos, cneg)
+→ metafor can compute $y_i$ = log(OR) automatically
+
+Others report OR + 95% CI
+→ we compute $y_i$ = log(OR) from the reported OR
+
+A few report OR + p-value (but no CI or raw data)
+→ we still compute $y_i$ = log(OR)
+
+<br>
+
+**Why vi needs to be filled in?**
+
+The variance $v_i$ tells metafor how much weight each study receives.
+
+
+If a study is precise, it gets higher weight. If a study is imprecise, it gets lower weight
+
+But depending on the reporting format:
+
+- When raw counts exist → metafor computes $v_i$
+- When we only have OR + CI → we compute SE = (log(U) - log(L))/3.92, then $v_i$ = SE²
+- When we have OR + p → we compute SE = log(OR)/z, then $v_i$ = SE²
+
+Thus, filling in $v_i$ ensures every study has a correct weight.
+
+Without $v_i$, metafor cannot:
+
+- estimate heterogeneity
+- compute weights
+- fit a random-effects model
+- produce a forest plot
+
+<br>
+
+<span class="bigpink">Are we following so far? :)</span>
+
+<br>
+
+### 4. Computing effect sizes
+
+Below is ready-to-paste code that:
+
+ - Uses counts (tpos, tneg, cpos, cneg) where available
+ - Fills in missing yi from the reported or
+ - Gets SE/variance either from p or from (ci_low, ci_high)
+
+```{r chunk4}
+library(metafor)
+
+# 1. Start by computing log OR and vi from raw counts where available
+dat_es <- escalc(
+  measure = "OR",
+  ai = tpos, bi = tneg,
+  ci = cpos, di = cneg,
+  data = review.dat
+)
+
+# 2. If yi is missing but an OR is reported, use log(OR)
+dat_es$yi <- replmiss(dat_es$yi, log(dat_es$or))
+
+# 3. Use p-values to get SE for studies with OR + p but no CI
+#    (two-sided p-value assumed)
+dat_es$zi  <- sign(dat_es$yi) * qnorm(dat_es$p / 2, lower.tail = FALSE)
+dat_es$sei <- dat_es$yi / dat_es$zi
+
+# 4. Where SE is still missing, calculate it from the 95% CI
+#    SE = (log(upper) - log(lower)) / (2 * 1.96)
+dat_es$sei <- replmiss(
+  dat_es$sei,
+  (log(dat_es$ci_high) - log(dat_es$ci_low)) / (2 * 1.96)
+)
+
+# 5. Fill missing variances from SE^2
+dat_es$vi <- replmiss(dat_es$vi, dat_es$sei^2)
+
+# 6. Tidy up
+dat_es$zi  <- NULL
+dat_es$sei <- NULL
+
+# Quick check to make sure all the yi and vi are there
+dat_es[, c("trial_ID", "author", "year", "yi", "vi")]
+```
+
+<br>
+
+### 5. Difference between fixed and random effects model
+
+<br>
+
+Meta-analysis can be conducted under two main models:
+
+ - Fixed-effect model
+ - Random-effects model
+
+They estimate different things and make different assumptions about your studies.
+
+⭐ **Fixed effect model** assumes
+
+ - All studies share one true effect size.
+ - Any differences between study results are due solely to sampling error.
+
+This is appropriate when:
+
+ - Studies are nearly identical
+ - Design, population, and methodology are homogeneous
+ - You want to estimate the effect for this specific set of studies only
+ - τ² (heterogeneity) is ~0
+
+⭐ **Random-effects** model assumes
+
+ - Each study estimates a different true effect, drawn from a distribution of true effects.
+ - Variability across studies reflects both sampling error and true differences.
+
+This is appropriate when:
+
+ - Studies differ in meaningful ways
+ - Behavioural trials (like smoking cessation) vary in intervention delivery, follow-up, sample, measurement
+ - You want to generalise to a broader population of studies
+ - τ² > 0 or I² is moderate-to-high
+
+In practice, most real-world public health datasets, including ours, use random-effects.
+
+<br>
+
+### 6. Run random effects meta-analysis
+
+<br>
+
+We will use the log odds ratio (log OR) as the common metric since many of the studies reported OR.
+
+```{r chunk5}
+res_adj <- rma(
+  yi,
+  vi,
+  slab = paste(author, year),
+  data = dat_es,
+  method = "REML"
+)
+
+res_adj
+```
+<br>
+<br>
+
+You will see several outputs
+
+```{chunk6 }
+Random-Effects Model (k = 11; tau^2 estimator: REML)
+k = 11: We included 11 studies.
+```
+
+Random-effects model: Assumes the true effect may vary across studies (appropriate for behavioural/cessation trials).
+
+REML: A robust method for estimating between-study variance.
+
+```{chunk7}
+tau^2 (estimated amount of total heterogeneity): 0.0222
+tau  (square root of tau^2): 0.1490
+```
+
+τ² measures how much the true effect sizes vary across studies. τ² = 0 would mean no heterogeneity at all.
+
+Here τ² ≈ 0.022 is small, suggesting the studies are relatively consistent.
+
+
+```{chunk7}
+I^2: 25.24%
+Q(df = 10) = 12.93, p = 0.2276
+
+```
+
+I² answers: How much of the total variability is beyond sampling error?
+
+- 0–25% → low heterogeneity
+- 25–50% → moderate
+- 50–75% → substantial
+- 75% → considerable
+
+Here, I² ≈ 25% → borderline low–moderate heterogeneity.
+
+Q-test tests:
+
+Are the effect sizes more different from each other than we’d expect by chance?
+
+p = 0.23 → not significant
+
+so there is no evidence of substantial heterogeneity beyond what would occur by random sampling error.
+
+Note: The Q-test is low-powered with few studies (k=11), so non-significance is common.
+
+This means the differences across studies are not huge.
+
+```{chunk8}
+estimate = 0.3642
+se       = 0.0957
+zval     = 3.8066
+pval     = 0.0001
+ci.lb    = 0.1766
+ci.ub    = 0.5517
+```
+
+These values are on the log-odds ratio scale, because escalc() computes log ORs.
+
+0.3642 is the pooled log OR.
+
+Exponentiate to get the pooled OR and 95% CI: 
+exp(0.3642) → 1.44
+exp(0.1766) → 1.19  
+exp(0.5517) → 1.74
+
+So the overall effect is approximately:
+
+OR ≈ 1.44 (95% CI=1.19,1.74), meaning adjunct tailored-print interventions improve 7-day PPA by ~44% compared to control.
+
+The pooled results from 11 studies show that adjunct tailored-print interventions significantly increase the odds of achieving 7-day point-prevalence abstinence by about 44% compared to control conditions. Heterogeneity across studies is low (I² ≈ 25%), indicating that the included trials are relatively consistent in their findings.
+
+### 7. Compute forest plot
+
+
+```{r chunk9, fig.width=7, fig.height=6}
+forest(
+  res_adj,
+  transf = exp,
+  refline = 1,
+  xlab = "Odds ratio (7-day PPA)"
+)
+```
+
+### 8. Publication Bias Assessment
+
+<br>
+
+A funnel plot is a simple and widely used method for visually assessing possible small-study effects or publication bias. In the context of smoking cessation trials, small studies may be more likely to report unusually large effects, either due to publication bias or true differences in study quality.
+
+```{r chunk10, fig.width=6, fig.height=6}
+funnel(
+  res_adj,
+  xlab = "Log Odds Ratio",
+  ylab = "Standard Error",
+  main = "Funnel Plot"
+)
+```
+
+⭐ **How to interpret the funnel plot**
+
+A funnel plot graphs:
+
+- Each study’s **effect size** (x-axis)  
+- Against its **precision** (y-axis; SE on the log scale)  
+
+Key points:
+
+- **Large studies** (small SE) appear near the **top**
+- **Small studies** (large SE) appear near the **bottom**
+- In the absence of bias, the points should form a **symmetric inverted funnel**
+
+What asymmetry looks like:
+
+- Missing studies on the **left** → possible publication bias favouring positive findings  
+- Missing studies on the **right** → possible bias against large effect sizes  
+- Steady drift to one side → small-study effects  
+
+Because our dataset has **k = 11 studies**, interpretation must remain cautious — funnel plots are unreliable with **<10 studies**, and still noisy with 10–20.
+
+---
+
+⭐ **Egger’s Test for Funnel Plot Asymmetry**
+
+You can formally test for asymmetry using `regtest()`:
+
+```{r chunk11}
+regtest(res_adj, model = "lm")
+```
+
+Egger’s regression test was non-significant, suggesting no statistical evidence of small-study effects. However, given the modest number of studies (k = 11), both visual and statistical assessments should be interpreted with caution, as funnel plots have limited power to detect asymmetry with small meta-analyses.
+
+
+### 9. Moderator analysis
+
+<br>
+
+We can also run a meta-regression to test whether the summary effect differed depending on whether the study used self-reported abstinence or biochemically verified abstinence:
+
+```{r moderator_model, warning=FALSE, message=FALSE}
+# Ensure the moderator is a factor
+dat_es$outcome_type <- factor(dat_es$outcome_type)
+
+# Fit the random-effects meta-regression
+res_mod <- rma(
+  yi,
+  vi,
+  mods = ~ outcome_type,
+  data = dat_es,
+  method = "REML"
+)
+
+res_mod
+```
+
+⭐  The  omnibus test asks:
+Does the quit effect differ between self-report vs biochemically verified studies?
+
+Since QM = 0.0564, p = 0.8123
+
+The answer is NO. There is no evidence that the cessation effect differs by outcome type.
+Studies using self-reported abstinence and those using biochemical verification produce statistically similar effect sizes.
+
