@@ -6,3 +6,5 @@ This will be a practical session, so please bring your laptop. We’ll download 
 1.	R (the statistical programming language)
 2.	RStudio (the R integrated development environment)
 
+You can download both from the following: https://posit.co/download/rstudio-desktop/
+
