@@ -1,0 +1,12 @@
+trial_ID,author,year,comparison_type,type,outcome_type,tpos,tneg,cpos,cneg,or,ci_low,ci_high,p
+#13854,Sutton,2007,adjunct,ppa_7d,self-report,,,,,1.59,1.15,2.19,
+#12390,Becon,2001,adjunct,ppa_7d,biochemically verified,,,,,2,1.1,3.8,
+#16645,Bock,2013,adjunct,ppa_7d,self-report,,,,,5.4,0.59,10.99,
+#11613,Curry,1991,adjunct,ppa_7d,self-report,,,,,1.8,1.1,3.1,
+#16794,Gilbert,2013,adjunct,ppa_7d,self-report,,,,,1.13,0.93,1.37,
+#13169,McClure,2005,adjunct,ppa_7d,self-report,,,,,1.72,0.89,3.32,
+#2347,Naughton,2017,adjunct,ppa_7d,biochemically verified,,,,,1.67,0.72,4.03,
+#2908,Coleman-Cowger,2018,adjunct,ppa_7d,biochemically verified,,,,,1.92,0.7,5.6,
+#9525,Cartmel ,2023,adjunct,ppa_7d,biochemically verified,15,78,16,79,,,,
+#16252,Meyer,2012,adjunct,ppa_7d,self-report,,,,,1.29,,,0.24
+#sb_ts,de Dios,2019,adjunct,ppa_7d,biochemically verified,6,10,4,5,,,,
